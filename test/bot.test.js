@@ -121,6 +121,31 @@ test('album items publish independently without waiting or cross-request groupin
     assert.equal(f.calls.some(c=>c.method==='sendMediaGroup'),false);
   }finally{f.restore();}
 });
+const tap=(data,id=updateId++)=>handleUpdate({update_id:id,callback_query:{id:`tap-${id}`,from:{id:42},message:{chat:{id:42}},data}});
+test('held post can be edited and approved once, then its payload is deleted',async()=>{
+  const f=fixture(configured());
+  try {
+    await post('قميص\nالسعر عند الطلب');const id=f.read().held[0].id;
+    await tap(`approve:${id}`);assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);
+    await tap(`price:${id}`);await owner('-10');assert.equal(f.read().wizard.step,'review_price');
+    await owner('١٥٠');await tap(`approve:${id}`);await tap(`approve:${id}`);
+    const sent=f.calls.filter(c=>c.data.chat_id==='-1002');assert.equal(sent.length,1);assert.match(sent[0].data.text,/165 جنيه/);
+    assert.equal(f.read().held.length,0);assert.equal(f.read().posts[0].status,'sent');
+  }finally{f.restore();}
+});
+test('reject removes held data without any destination send',async()=>{
+  const f=fixture(configured());try {
+    await post('قميص بدون سعر');const id=f.read().held[0].id;await tap(`reject:${id}`);
+    assert.equal(f.read().held.length,0);assert.equal(f.read().posts[0].status,'rejected');assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);
+  }finally{f.restore();}
+});
+test('unauthorized callback cannot approve or retry a post',async()=>{
+  const f=fixture(configured());try {
+    await post('قميص بدون سعر');const id=f.read().held[0].id;const count=f.calls.length;
+    await handleUpdate({callback_query:{id:'forged',from:{id:7},message:{chat:{id:42}},data:`reject:${id}`}});
+    assert.equal(f.calls.length,count);assert.equal(f.read().held.length,1);
+  }finally{f.restore();}
+});
 test('يعدل الصيغة والعمولة ويحذف القناة بتأكيد داخل البوت',async()=>{
   const f=fixture(configured());try{
     await owner('تعديل قناة');await owner('المتجر (-1002)');await owner('50');await owner('الصيغة الافتراضية');await owner('حفظ القناة');
