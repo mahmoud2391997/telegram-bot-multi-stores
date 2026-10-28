@@ -111,6 +111,16 @@ test('لا ينشر سعرًا غير واضح وينبه المالك',async()=
 test('ينشر الصورة مع الوصف والسعر المحسوب',async()=>{
   const f=fixture(configured());try{await handleUpdate({channel_post:{chat:{id:-1001,type:'channel'},message_id:15,caption:'هاتف\nالسعر: 200 جنيه',photo:[{file_id:'small'},{file_id:'large'}]}});const sent=f.calls.find(c=>c.method==='sendPhoto');assert.equal(sent.data.photo,'large');assert.match(sent.data.caption,/220 جنيه/);}finally{f.restore();}
 });
+test('album items publish independently without waiting or cross-request grouping',async()=>{
+  const f=fixture(configured());
+  try {
+    for(const id of [81,82]) {
+      await handleUpdate({update_id:800+id,channel_post:{chat:{id:-1001,type:'channel'},message_id:id,media_group_id:'album-1',caption:'قميص\nالسعر: 200 جنيه',photo:[{file_id:`photo-${id}`,file_unique_id:`unique-${id}`}]}});
+      assert.equal(f.calls.filter(c=>c.method==='sendPhoto').length,id-80);
+    }
+    assert.equal(f.calls.some(c=>c.method==='sendMediaGroup'),false);
+  }finally{f.restore();}
+});
 test('يعدل الصيغة والعمولة ويحذف القناة بتأكيد داخل البوت',async()=>{
   const f=fixture(configured());try{
     await owner('تعديل قناة');await owner('المتجر (-1002)');await owner('50');await owner('الصيغة الافتراضية');await owner('حفظ القناة');
