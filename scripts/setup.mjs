@@ -1,9 +1,14 @@
-import {telegram} from '../lib/telegram.js';
-for(const key of ['BOT_TOKEN','OWNER_ID','WEBHOOK_SECRET','APP_URL']) if(!process.env[key]) throw new Error(`متغير الإعدادات مفقود: ${key}`);
-if(!/^\d+$/.test(process.env.OWNER_ID)) throw new Error('OWNER_ID يجب أن يكون معرّف المالك الرقمي في تيليجرام');
-if(!/^[A-Za-z0-9_-]{16,256}$/.test(process.env.WEBHOOK_SECRET)) throw new Error('استخدم WEBHOOK_SECRET عشوائيًا بطول 16 إلى 256 حرفًا من الحروف الإنجليزية والأرقام والشرطة والشرطة السفلية');
-const url=new URL('/api/webhook',process.env.APP_URL);
-if(url.protocol!=='https:') throw new Error('APP_URL يجب أن يستخدم HTTPS');
-await telegram('setWebhook',{url:url.href,secret_token:process.env.WEBHOOK_SECRET,allowed_updates:['message','channel_post'],max_connections:1});
-await telegram('setMyCommands',{commands:[{command:'start',description:'فتح قائمة إدارة القنوات'},{command:'help',description:'شرح استخدام البوت'},{command:'cancel',description:'إلغاء الخطوة الحالية'}]});
-console.log('تم تسجيل عنوان استقبال التحديثات. افتح البوت وأرسل /start. لا تحتاج إلى قاعدة بيانات.');
+import {registerWebhook} from '../lib/setup.js';
+if(!process.env.BOT_TOKEN || !process.env.APP_URL) throw new Error('أضف BOT_TOKEN وAPP_URL إلى ملف الإعدادات المحلي أولًا.');
+if(process.env.WEBHOOK_SECRET) {
+  const bot=await registerWebhook();
+  console.log(`تم ربط البوت @${bot.username}. افتح المحادثة وأرسل /start.`);
+} else {
+  // The production webhook secret remains in Vercel; do not retrieve or copy it locally.
+  const url=new URL('/api/setup',process.env.APP_URL);
+  if(url.protocol!=='https:') throw new Error('عنوان السيرفر يجب أن يستخدم HTTPS');
+  const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${process.env.BOT_TOKEN}`},redirect:'error',signal:AbortSignal.timeout(45000)});
+  if(!response.ok) throw new Error(`تعذر الربط (${response.status}). أضف بيانات البوت والمالك إلى Vercel وأعد النشر أولًا.`);
+  const result=await response.json();
+  console.log(`تم ربط البوت @${result.username}. افتح المحادثة وأرسل /start.`);
+}
