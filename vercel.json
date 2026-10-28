@@ -15,5 +15,6 @@
       ]
     }
   ],
-  "buildCommand": "npm test"
+  "buildCommand": "npm test",
+  "outputDirectory": "public"
 }
