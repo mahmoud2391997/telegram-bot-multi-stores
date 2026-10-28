@@ -127,3 +127,9 @@ test('يتوقف للمراجعة إذا أعاد Groq أسعارًا غامضة
 test('يتيح تجربة قالب الملابس دون إضافة وجهة',async()=>{
   const f=fixture();try{await owner('تجربة التحليل');assert.equal(f.read().wizard.step,'test_post');await owner('قميص\nالسعر: 250 جنيه');assert.ok(f.calls.some(c=>c.method==='sendMessage'&&/قالب الملابس التجريبي/.test(c.data.text)));assert.equal(f.read().channels.length,0);}finally{f.restore();}
 });
+test('يقبل اختيار المصدر المكتوب بالعربية حتى مع علامات الاقتباس',async()=>{
+  const c=emptyConfig();c.departments=[{id:'d1',name:'ملابس',currency:'جنيه'}];
+  for(const value of ['استقبال','«مصدر (استقبال)»']){
+    const f=fixture(c);try{await owner('إضافة قناة');await owner(value);assert.equal(f.read().wizard.step,'department');assert.equal(f.read().wizard.channel.role,'source');}finally{f.restore();}
+  }
+});
