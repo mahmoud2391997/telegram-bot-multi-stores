@@ -9,7 +9,9 @@
   "scripts": {
     "test": "node --test",
     "setup": "node scripts/setup.mjs",
-    "check:groq": "node --env-file=.env.local scripts/check-groq.mjs"
+    "check:groq": "node --env-file=.env.local scripts/check-groq.mjs",
+    "evaluate": "node --env-file=.env.local scripts/evaluate.mjs",
+    "measure:storage": "node scripts/measure-storage.mjs"
   },
   "dependencies": {
     "@ai-sdk/groq": "^4.0.72",

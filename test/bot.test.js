@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {handleUpdate} from '../lib/bot.js';
 import {emptyConfig,encodeConfig,decodeConfig} from '../lib/settings.js';
 import {defaultFormat} from '../lib/parser.js';
+import webhook from '../api/webhook.js';
 process.env.OWNER_ID='42';
 process.env.AI_PARSING_ENABLED='false';
 process.env.WEBHOOK_SECRET='test-secret-for-local-checks-only';
@@ -105,6 +106,20 @@ test('ينشر فورًا بسعر المورد مضافًا إليه العمو
 test('يتجنب تكرار الإرسال عند انقطاع الشبكة',async()=>{
   const f=fixture(configured(),{failDestination:true});try{await post();await post();assert.equal(f.calls.filter(c=>c.method==='sendMessage'&&c.data.chat_id==='-1002').length,1);assert.equal(f.read().receipts[0].status,'uncertain');}finally{f.restore();}
 });
+test('an uncertain send cannot be forced through the failed-post retry callback',async()=>{
+  const f=fixture(configured(),{failDestination:true});try {
+    await post();await tap('retry:-1001:12');await post();
+    assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,1);
+    assert.equal(f.read().posts[0].status,'uncertain');
+  }finally{f.restore();}
+});
+test('redelivered initialize update does not reset pinned settings twice',async()=>{
+  const f=fixture(configured());try {
+    const update={update_id:70001,message:{chat:{id:42,type:'private'},from:{id:42},text:'/initialize'}};
+    await handleUpdate(update);await handleUpdate(update);
+    assert.equal(f.calls.filter(c=>c.method==='pinChatMessage').length,1);
+  }finally{f.restore();}
+});
 test('لا ينشر سعرًا غير واضح وينبه المالك',async()=>{
   const f=fixture(configured());try{await post('هاتف 128 GB\nالسعر عند الطلب');assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);assert.match(f.calls.at(-1).data.text,/لعدم وجود سعر مورد واضح/);}finally{f.restore();}
 });
@@ -171,6 +186,25 @@ test('يجرّب التحليل والعمولة دون النشر للوجها�
 });
 
 const aiProduct = patch => ({status:'ready',product_name:'قميص',description:'قميص قطن أزرق',supplier_price:'250',currency:'EGP',price_evidence:'PRICE 250 EGP',price_basis:'item',code:'TS-104',model:null,material:'قطن',colors:['أزرق'],sizes:['M','L'],capacity:null,condition:null,warnings:[],confidence:0.96,...patch});
+test('authenticated webhook processes a Groq text post and skips redelivery',async()=>{
+  process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';
+  const f=fixture(configured(),{aiOutput:aiProduct()});
+  const request={method:'POST',headers:{'x-telegram-bot-api-secret-token':process.env.WEBHOOK_SECRET},body:{update_id:90001,channel_post:{chat:{id:-1001,type:'channel'},message_id:901,text:'قميص\nPRICE 250 EGP'}}};
+  const response=()=>({status(code){this.code=code;return this;},json(){return this;},end(){},setHeader(){}});
+  try {
+    const first=response();await webhook(request,first);await webhook(request,response());assert.equal(first.code,200);
+    assert.equal(f.calls.filter(c=>c.method==='groq').length,1);
+    const sent=f.calls.filter(c=>c.data.chat_id==='-1002');assert.equal(sent.length,1);assert.match(sent[0].data.text,/275 جنيه/);
+  }finally{f.restore();process.env.AI_PARSING_ENABLED='false';delete process.env.GROQ_API_KEY;}
+});
+test('low confidence remains blocked after owner edits price and presses approve',async()=>{
+  process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';const f=fixture(configured(),{aiOutput:aiProduct({confidence:0.5})});
+  try {
+    await post('قميص\nPRICE 250 EGP');const id=f.read().held[0].id;
+    await tap(`price:${id}`);await owner('250');await tap(`approve:${id}`);
+    assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);assert.equal(f.read().held.length,1);
+  }finally{f.restore();process.env.AI_PARSING_ENABLED='false';delete process.env.GROQ_API_KEY;}
+});
 test('ينشر صورة بلا وصف بعد تحليل Groq ويحسب العمولة بالكود',async()=>{
   process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';
   const f=fixture(configured(),{aiOutput:aiProduct()});

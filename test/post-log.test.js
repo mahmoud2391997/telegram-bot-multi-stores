@@ -20,3 +20,9 @@ test('hashes normalized text and stable file identity without storing secrets',(
   assert.deepEqual(fingerprints(message),fingerprints({...message,text:'منتج السعر 75',photo:[{file_id:'new',file_unique_id:'stable'}]}));
   assert.notEqual(fingerprints(message).imageHash,fingerprints({...message,photo:[{file_unique_id:'other'}]}).imageHash);
 });
+test('partial failure still blocks duplicate content if any destination sent or is uncertain',()=>{
+  const config={};const first=claimPost(config,message,1);first.status='failed';
+  const next=claimPost(config,{...message,message_id:2},2);
+  config.receipts=[{source:first.source,message:first.message,target:'a',status:'uncertain'}];
+  assert.equal(findDuplicate(config,next),first);
+});
