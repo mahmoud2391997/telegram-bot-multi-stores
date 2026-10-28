@@ -121,6 +121,13 @@ test('album items publish independently without waiting or cross-request groupin
     assert.equal(f.calls.some(c=>c.method==='sendMediaGroup'),false);
   }finally{f.restore();}
 });
+test('a new message with duplicate content warns without parsing or publishing twice',async()=>{
+  const f=fixture(configured());try {
+    await post();await handleUpdate({update_id:updateId++,channel_post:{chat:{id:-1001,type:'channel'},message_id:999,text:'هاتف\nاللون: أسود\nالسعر: 100 جنيه'}});
+    assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,1);
+    assert.equal(f.read().posts.at(-1).status,'duplicate');assert.match(f.calls.at(-1).data.text,/محتوى مكرر/);
+  }finally{f.restore();}
+});
 const tap=(data,id=updateId++)=>handleUpdate({update_id:id,callback_query:{id:`tap-${id}`,from:{id:42},message:{chat:{id:42}},data}});
 test('held post can be edited and approved once, then its payload is deleted',async()=>{
   const f=fixture(configured());
