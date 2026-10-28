@@ -4,6 +4,7 @@ import {handleUpdate} from '../lib/bot.js';
 import {emptyConfig,encodeConfig,decodeConfig} from '../lib/settings.js';
 import {defaultFormat} from '../lib/parser.js';
 process.env.OWNER_ID='42';
+process.env.AI_PARSING_ENABLED='false';
 process.env.WEBHOOK_SECRET='test-secret-for-local-checks-only';
 const configText=config=>`إعدادات_البوت:${encodeConfig(config)}`;
 function fixture(config=emptyConfig(),options={}) {
@@ -11,11 +12,17 @@ function fixture(config=emptyConfig(),options={}) {
   const calls=[];
   const original=global.fetch;
   global.fetch=async(url,request)=>{
-    const method=url.split('/').at(-1),data=JSON.parse(request.body);
+    if(String(url).startsWith('https://api.groq.com/')) {
+      const data=JSON.parse(request.body);calls.push({method:'groq',data});
+      return new Response(JSON.stringify({id:'chatcmpl-test',object:'chat.completion',created:1,model:data.model,choices:[{index:0,message:{role:'assistant',content:JSON.stringify(options.aiOutput)},finish_reason:'stop'}],usage:{prompt_tokens:20,completion_tokens:40,total_tokens:60}}),{headers:{'content-type':'application/json'}});
+    }
+    if(String(url).includes('/file/bot')) return new Response(Buffer.from([255,216,255,0]),{headers:{'content-type':'image/jpeg'}});
+    const method=url.split('/').at(-1),data=request?.body?JSON.parse(request.body):{};
     calls.push({method,data});
     let result=true;
     if(method==='getChat') result=String(data.chat_id)==='42'?{id:42,pinned_message:pinned}:{id:Number(data.chat_id)||-1001,title:'قناة تجريبية',type:'channel'};
     if(method==='getMe') result={id:99};
+    if(method==='getFile') result={file_path:'photos/file_1.jpg',file_size:4};
     if(method==='getChatMember') result={status:'administrator',can_post_messages:options.canPost!==false};
     if(method==='sendMessage') {
       if(String(data.chat_id)==='-1002' && options.failDestination) throw new Error('Network timeout');
@@ -96,4 +103,27 @@ test('يعرض قنوات الملابس العامة دون تفعيلها تل
 });
 test('يجرّب التحليل والعمولة دون النشر للوجهات',async()=>{
   const f=fixture(configured());try{await owner('تجربة التحليل');await owner('المتجر (-1002)');await owner('قميص\nاللون: أزرق\nالسعر: 100 جنيه');assert.ok(f.calls.some(c=>c.method==='sendMessage'&&/110 جنيه/.test(c.data.text)));assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);assert.equal(f.read().wizard,null);}finally{f.restore();}
+});
+
+const aiProduct = patch => ({status:'ready',product_name:'قميص',description:'قميص قطن أزرق',supplier_price:'250',currency:'EGP',price_evidence:'PRICE 250 EGP',price_basis:'item',code:'TS-104',model:null,material:'قطن',colors:['أزرق'],sizes:['M','L'],capacity:null,condition:null,warnings:[],confidence:0.96,...patch});
+test('ينشر صورة بلا وصف بعد تحليل Groq ويحسب العمولة بالكود',async()=>{
+  process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';
+  const f=fixture(configured(),{aiOutput:aiProduct()});
+  try{
+    const update={channel_post:{chat:{id:-1001,type:'channel'},message_id:40,photo:[{file_id:'image'}]}};
+    await handleUpdate(update);await handleUpdate(update);
+    const sent=f.calls.filter(c=>c.method==='sendPhoto');assert.equal(sent.length,1);assert.match(sent[0].data.caption,/275 جنيه/);
+    const requests=f.calls.filter(c=>c.method==='groq');assert.equal(requests.length,1);assert.equal(requests[0].data.model,'qwen/qwen3.8-27b');
+    assert.ok(JSON.stringify(requests[0].data.messages).includes('data:image/jpeg;base64,'));
+    assert.equal(JSON.stringify(requests[0].data.messages).includes('api.telegram.org'),false);
+  }finally{f.restore();process.env.AI_PARSING_ENABLED='false';delete process.env.GROQ_API_KEY;}
+});
+test('يتوقف للمراجعة إذا أعاد Groq أسعارًا غامضة',async()=>{
+  process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';
+  const f=fixture(configured(),{aiOutput:aiProduct({status:'review',warnings:['يوجد سعران مختلفان']})});
+  try{await post('قميص بسعرين');assert.equal(f.calls.filter(c=>c.method==='sendMessage'&&c.data.chat_id==='-1002').length,0);assert.match(f.calls.at(-1).data.text,/تحتاج مراجعة/);}
+  finally{f.restore();process.env.AI_PARSING_ENABLED='false';delete process.env.GROQ_API_KEY;}
+});
+test('يتيح تجربة قالب الملابس دون إضافة وجهة',async()=>{
+  const f=fixture();try{await owner('تجربة التحليل');assert.equal(f.read().wizard.step,'test_post');await owner('قميص\nالسعر: 250 جنيه');assert.ok(f.calls.some(c=>c.method==='sendMessage'&&/قالب الملابس التجريبي/.test(c.data.text)));assert.equal(f.read().channels.length,0);}finally{f.restore();}
 });
