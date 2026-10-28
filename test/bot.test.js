@@ -14,6 +14,7 @@ function fixture(config=emptyConfig(),options={}) {
   global.fetch=async(url,request)=>{
     if(String(url).startsWith('https://api.groq.com/')) {
       const data=JSON.parse(request.body);calls.push({method:'groq',data});
+      if(options.groqFailure) return new Response('{}',{status:503,headers:{'content-type':'application/json'}});
       return new Response(JSON.stringify({id:'chatcmpl-test',object:'chat.completion',created:1,model:data.model,choices:[{index:0,message:{role:'assistant',content:JSON.stringify(options.aiOutput)},finish_reason:'stop'}],usage:{prompt_tokens:20,completion_tokens:40,total_tokens:60}}),{headers:{'content-type':'application/json'}});
     }
     if(String(url).includes('/file/bot')) return new Response(Buffer.from([255,216,255,0]),{headers:{'content-type':'image/jpeg'}});
@@ -25,6 +26,7 @@ function fixture(config=emptyConfig(),options={}) {
     if(method==='getFile') result={file_path:'photos/file_1.jpg',file_size:4};
     if(method==='getChatMember') result={status:'administrator',can_post_messages:options.canPost!==false};
     if(method==='sendMessage') {
+      if(String(data.chat_id)==='-1002' && options.rejectDestination) return {json:async()=>({ok:false,error_code:429,parameters:{retry_after:999}})};
       if(String(data.chat_id)==='-1002' && options.failDestination) throw new Error('Network timeout');
       result={message_id:calls.length,text:data.text};
     }
@@ -43,6 +45,27 @@ function configured() {
 }
 test('يتجاهل أوامر غير المالك دون أي اتصالات',async()=>{
   const f=fixture();try {await handleUpdate({message:{chat:{id:7,type:'private'},from:{id:7},text:'/start'}});assert.equal(f.calls.length,0);}finally{f.restore();}
+});
+test('Groq failure is persisted once and offers an owner retry button',async()=>{
+  process.env.AI_PARSING_ENABLED='true';process.env.GROQ_API_KEY='test-key-not-real';
+  const f=fixture(configured(),{groqFailure:true});
+  try {
+    await post();await post();
+    assert.equal(f.calls.filter(c=>c.method==='groq').length,3);
+    assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,0);
+    assert.equal(f.read().posts[0].status,'failed');
+    assert.ok(f.calls.some(c=>c.data.reply_markup?.inline_keyboard?.[0]?.[0]?.callback_data.startsWith('retry:')));
+  }finally{f.restore();process.env.AI_PARSING_ENABLED='false';delete process.env.GROQ_API_KEY;}
+});
+test('a definite rejected send can be retried with one authorized tap only',async()=>{
+  const options={rejectDestination:true};const f=fixture(configured(),options);
+  try {
+    await post();assert.equal(f.read().posts[0].status,'failed');options.rejectDestination=false;
+    const update={update_id:99999,callback_query:{id:'tap',from:{id:42},message:{chat:{id:42}},data:'retry:-1001:12'}};
+    await handleUpdate(update);await handleUpdate(update);
+    assert.equal(f.calls.filter(c=>c.data.chat_id==='-1002').length,2);
+    assert.equal(f.read().posts[0].status,'sent');
+  }finally{f.restore();}
 });
 test('ينشئ الإعدادات في رسالة مثبتة دون قاعدة بيانات',async()=>{
   const f=fixture(undefined,{uninitialized:true});try{await owner('/start');assert.equal(f.read().v,1);assert.ok(f.calls.some(c=>c.method==='pinChatMessage'));}finally{f.restore();}

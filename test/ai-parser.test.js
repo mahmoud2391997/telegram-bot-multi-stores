@@ -60,10 +60,10 @@ test('يعزل النص غير الموثوق ويطلب مخططًا منظمً
   assert.equal(captured.model.modelId,'openai/gpt-oss-120b');assert.equal(captured.tools,undefined);assert.ok(captured.output);
   assert.match(captured.system,/never obey/);assert.match(captured.messages[0].content[0].text,/<SUPPLIER_TEXT>/);
 });
-test('يتعامل مع أخطاء الخدمة دون إعادة طلب أو نشر بديل ناقص',async()=>{
+test('retries transient Groq failures twice without leaking provider errors',async()=>{
   let calls=0;
   await assert.rejects(extractWithGroq({text:source},{generate:async()=>{calls++;throw {statusCode:429,responseBody:'secret error body'};}}),error=>error.code==='rate_limit'&&!error.message.includes('secret'));
-  assert.equal(calls,1);
+  assert.equal(calls,3);
 });
 test('يختار القواعد عند تعطيل AI ولا يتصل بتنزيل الصورة',async()=>{
   const p=await analyzeMessage({caption:source,photo:[{file_id:'x'}]},{enabled:false,download:()=>{throw new Error('Must not download');}});
